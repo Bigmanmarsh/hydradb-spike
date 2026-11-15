@@ -70,6 +70,27 @@ smoke() {
     *'"value":2'*) echo "[spike] SMOKE OK" ;;
     *) echo "[spike] SMOKE FAIL: unexpected read result" ;;
   esac
+
+  # selfgraph check: the exact delete_edges_touching_by_type statement shape.
+  runp() {
+    curl -sS -m 15 -X POST "$Q" \
+      -H "Authorization: Bearer $TOKEN" \
+      -H 'Content-Type: application/json' \
+      --data "{\"cell_id\":\"cell-0\",\"query\":\"$1\",\"parameters\":$2}" || echo "CURL_FAILED"
+  }
+  P='{"ns":"t","et":"MADE_DECISION","iid":100}'
+  echo "[sg] seed nodes: $(runp "UNWIND [{id: 100, l: 1}] AS row MERGE (n {id: row.id}) SET n:Trace" '{}')"
+  echo "[sg] seed nodes: $(runp "UNWIND [{id: 200}, {id: 300}] AS row MERGE (n {id: row.id}) SET n:Entity" '{}')"
+  echo "[sg] seed edges: $(runp "UNWIND [{f: 200, t: 100, id: 901}] AS row MATCH (a:Entity {id: row.f}), (b:Trace {id: row.t}) MERGE (a)-[r:RELATES {id: row.id}]->(b) SET r.ns = 't', r.etype = 'MADE_DECISION'" '{}')"
+  echo "[sg] seed edges: $(runp "UNWIND [{f: 100, t: 300, id: 902}] AS row MATCH (a:Trace {id: row.f}), (b:Entity {id: row.t}) MERGE (a)-[r:RELATES {id: row.id}]->(b) SET r.ns = 't', r.etype = 'RESULTED_IN'" '{}')"
+  echo "[sg] count before: $(runp 'MATCH (t:Trace {id: $iid})<-[r:RELATES]-(o) RETURN count(r) AS n' "$P")"
+  echo "[sg] UNDIRECTED delete (selfgraph as written): $(runp 'MATCH (t:Trace {id: $iid})-[r:RELATES]-(o) WHERE NOT r.`ns` <> $ns AND NOT r.`etype` <> $et DELETE r' "$P")"
+  echo "[sg] count after undirected: $(runp 'MATCH (t:Trace {id: $iid})<-[r:RELATES]-(o) RETURN count(r) AS n' "$P")"
+  echo "[sg] OUT delete: $(runp 'MATCH (t:Trace {id: $iid})-[r:RELATES]->(o) WHERE NOT r.`ns` <> $ns AND NOT r.`etype` <> $et DELETE r' "$P")"
+  echo "[sg] IN delete: $(runp 'MATCH (t:Trace {id: $iid})<-[r:RELATES]-(o) WHERE NOT r.`ns` <> $ns AND NOT r.`etype` <> $et DELETE r' "$P")"
+  echo "[sg] count after directed: $(runp 'MATCH (t:Trace {id: $iid})<-[r:RELATES]-(o) RETURN count(r) AS n' "$P")"
+  echo "[sg] other-type edge kept: $(runp 'MATCH (t:Trace {id: $iid})-[r:RELATES]->(o) RETURN r.etype AS et' "$P")"
+  echo "[sg] DONE"
 }
 
 smoke &
